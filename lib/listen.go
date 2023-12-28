@@ -50,6 +50,12 @@ func (l *Listen) Listen(client *Client) (err error) {
 
 	if strings.HasPrefix(l.Addr, "FD:") {
 		addr := l.Addr[3:]
+		// activation requires that LISTEN_PID is set correctly
+		// it's tough to know beforehand while cloning
+		if os.Getenv("FIX_LISTEN_PID") != "" {
+			os.Setenv("LISTEN_PID", strconv.Itoa(os.Getpid()))
+		}
+
 		var fd int
 		fd, err = strconv.Atoi(addr)
 		if err == nil {
@@ -109,6 +115,31 @@ func (l *Listen) Listen(client *Client) (err error) {
 		}
 
 		l.GID = int(gid)
+	}
+
+	if l.Fork {
+		cloneflags, err := NewCloneflags()
+		if err != nil {
+			return err
+		}
+
+		cloneflags.PrivateNetwork = true
+		cloneflags.PrivateMounts = true
+		cloneflags.PrivatePID = true
+		cloneflags.PrivateUsers = true
+		cloneflags.PrivateUTS = true
+		// hangs child process
+		// cloneflags.PrivateTLS = true
+		cloneflags.PrivateIO = true
+		cloneflags.PrivateIPC = true
+		cloneflags.PrivateClock = true
+		cloneflags.PrivateCGroup = true
+
+		p := &Proc{Ctx: l.Ctx, Cloneflags: cloneflags, Uid: l.UID, Gid: l.GID}
+		if err := p.ForkListenerPipe(l.listener, client.Dial); err != nil {
+			return err
+		}
+		return nil
 	}
 
 	var from net.Conn

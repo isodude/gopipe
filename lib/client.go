@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
+	"os"
+	"strconv"
+	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 type Client struct {
@@ -19,6 +23,42 @@ type Client struct {
 	Ctx context.Context
 }
 
+func (c *Client) Conn() (net.Conn, error) {
+	file, err := c.File()
+	if err != nil {
+		return nil, err
+	}
+
+	defer file.Close()
+	return net.FileConn(file)
+}
+
+func (c *Client) File() (*os.File, error) {
+	fd, err := c.Fd()
+	if err != nil {
+		return nil, err
+	}
+
+	f := os.NewFile(uintptr(fd), "client")
+	return f, nil
+}
+
+func (c *Client) IsFd() bool {
+	if !strings.HasPrefix(c.Addr, "FD:") {
+		return false
+	}
+
+	return true
+}
+
+func (c *Client) Fd() (int, error) {
+	if !c.IsFd() {
+		return 0, fmt.Errorf("Not an FD: %s", c.Addr)
+	}
+
+	return strconv.Atoi(c.Addr[3:])
+}
+
 func (c *Client) Dial(from net.Conn) {
 	defer from.Close()
 	var err error
@@ -26,7 +66,24 @@ func (c *Client) Dial(from net.Conn) {
 	var triedAgain bool
 
 again:
-	if c.TLS.config != nil {
+	if c.IsFd() {
+		connFd, err := ConnFd(from.(*net.TCPConn))
+		if err != nil {
+			fmt.Printf("dial: err: %v\n", err)
+			return
+		}
+
+		rights := unix.UnixRights(connFd)
+
+		fd, err := c.Fd()
+		if err != nil {
+			fmt.Printf("dial: err: %v\n", err)
+			return
+		}
+
+		unix.Sendmsg(fd, nil, rights, nil, 0)
+		return
+	} else if c.TLS.config != nil {
 		to, err = tls.DialWithDialer(c.NetNs.Dialer(c.SourceIP), "tcp", c.Addr, c.TLS.config)
 	} else {
 		to, err = c.NetNs.Dialer(c.SourceIP).Dial("tcp", c.Addr)
@@ -37,32 +94,13 @@ again:
 			triedAgain = true
 			goto again
 		}
-        if err != io.EOF {
-    		fmt.Printf("dial: err: %v\n", err)
-        }
+		if err != io.EOF {
+			fmt.Printf("dial: err: %v\n", err)
+		}
 		return
 	}
 
-	func(c [2]net.Conn) {
-		defer c[0].Close()
-		defer c[1].Close()
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-
-		f := func(c [2]net.Conn) {
-			defer wg.Done()
-			io.Copy(c[0], c[1])
-			// Signal peer that no more data is coming.
-			if tcpConn, ok := c[0].(*net.TCPConn); ok {
-				tcpConn.CloseWrite()
-			}
-		}
-		go f(c)
-		go f([2]net.Conn{c[1], c[0]})
-
-		wg.Wait()
-	}([2]net.Conn{to, from})
+	CopyDuplex(to, from)
 
 	return
 }
