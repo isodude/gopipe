@@ -126,7 +126,9 @@ func (l *Listen) Listen(client *Client) (err error) {
 		cloneflags.PrivateNetwork = true
 		cloneflags.PrivateMounts = true
 		cloneflags.PrivatePID = true
-		cloneflags.PrivateUsers = true
+		if l.UID == 0 && l.GID == 0 {
+			cloneflags.PrivateUsers = true
+		}
 		cloneflags.PrivateUTS = true
 		// hangs child process
 		// cloneflags.PrivateTLS = true
