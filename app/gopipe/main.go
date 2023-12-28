@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-    "os"
+	"os"
 
+	"github.com/isodude/gopipe/lib"
 	"github.com/jessevdk/go-flags"
-    "github.com/isodude/gopipe/lib"
 )
 
 type Args struct {
@@ -18,7 +18,17 @@ type Args struct {
 
 func main() {
 	args := &Args{}
-	if _, err := flags.ParseArgs(args, os.Args[1:]); err != nil {
+	p := flags.NewParser(args, flags.Default)
+	if len(os.Args) == 1 {
+		p.WriteHelp(os.Stderr)
+		return
+	}
+
+	if _, err := p.Parse(); err != nil {
+		if flags.WroteHelp(err) {
+			return
+		}
+
 		panic(err)
 	}
 
@@ -28,20 +38,20 @@ func main() {
 	args.Client.Ctx = ctx
 	args.Client.NetNs.Ctx = ctx
 
-    if args.Debug {
-        args.Listen.Debug = true
-        args.Client.Debug = true
-    }
+	if args.Debug {
+		args.Listen.Debug = true
+		args.Client.Debug = true
+	}
 
-    if args.Listen.Debug {
-        args.Listen.NetNs.Debug = true
-        args.Listen.TLS.Debug = true
-    }
+	if args.Listen.Debug {
+		args.Listen.NetNs.Debug = true
+		args.Listen.TLS.Debug = true
+	}
 
-    if args.Client.Debug {
-        args.Client.NetNs.Debug = true
-        args.Client.TLS.Debug = true
-    }
+	if args.Client.Debug {
+		args.Client.NetNs.Debug = true
+		args.Client.TLS.Debug = true
+	}
 
 	if err := args.Listen.TLS.TLSConfig(); err != nil {
 		panic(err)
@@ -51,7 +61,7 @@ func main() {
 		panic(err)
 	}
 
-    if err := args.Listen.Listen(&args.Client); err != nil {
-	   	panic(err)
-    }
+	if err := args.Listen.Listen(&args.Client); err != nil {
+		panic(err)
+	}
 }
