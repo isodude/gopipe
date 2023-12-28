@@ -1,16 +1,16 @@
 package lib
 
 import (
-    "context"
-    "fmt"
-    "net"
-    "runtime"
-    "strings"
-    "sync"
-    "syscall"
+	"context"
+	"fmt"
+	"net"
+	"runtime"
+	"strings"
+	"sync"
+	"syscall"
 
-    "github.com/coreos/go-systemd/v22/dbus"
- 	"github.com/vishvananda/netns"
+	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/vishvananda/netns"
 )
 
 type NetworkNamespace struct {
@@ -26,47 +26,47 @@ type NetworkNamespace struct {
 	nsHandle         netns.NsHandle
 	switched         bool
 	lookedup         bool
-    armed            bool
-	Debug    bool             `long:"debug"`
+	armed            bool
+	Debug            bool `long:"debug"`
 }
 
 func (n *NetworkNamespace) ChangeEveryThread() error {
 	if !n.lookedup {
-        if err, _ := n.refreshNetNSID(); err != nil {
+		if err, _ := n.refreshNetNSID(); err != nil {
 			return fmt.Errorf("refreshNetNSID: %s", err)
 		}
 	}
 
-    if !n.armed {
-        return nil
-    }
+	if !n.armed {
+		return nil
+	}
 
-    wgFunc := sync.WaitGroup{}
-    wgFunc1 := sync.WaitGroup{}
-    wg := sync.WaitGroup{}
-    wg.Add(1)
-    for i := 1; i < runtime.GOMAXPROCS(-1); i++ {
-        wgFunc.Add(1)
-        wgFunc1.Add(1)
-        go func(tid int) {
-            runtime.LockOSThread()
-            defer runtime.UnlockOSThread()
-            ptid := syscall.Gettid()
-            if n.Debug {
-                fmt.Printf("changing thread %v, %d\n", ptid, tid)
-                defer fmt.Printf("changed thread %v, %d\n", ptid, tid)
-            }
-            wgFunc.Done()
-            n.Enter()
-            wgFunc1.Done()
-            wg.Wait()
-        }(i)
-    }
-    wgFunc.Wait()
-    wgFunc1.Wait()
-    wg.Done()
+	wgFunc := sync.WaitGroup{}
+	wgFunc1 := sync.WaitGroup{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	for i := 1; i < runtime.GOMAXPROCS(-1); i++ {
+		wgFunc.Add(1)
+		wgFunc1.Add(1)
+		go func(tid int) {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			ptid := syscall.Gettid()
+			if n.Debug {
+				fmt.Printf("changing thread %v, %d\n", ptid, tid)
+				defer fmt.Printf("changed thread %v, %d\n", ptid, tid)
+			}
+			wgFunc.Done()
+			n.Enter()
+			wgFunc1.Done()
+			wg.Wait()
+		}(i)
+	}
+	wgFunc.Wait()
+	wgFunc1.Wait()
+	wg.Done()
 
-    return nil
+	return nil
 }
 
 func (n *NetworkNamespace) Dialer(sourceIP string) *net.Dialer {
@@ -106,28 +106,28 @@ func (n *NetworkNamespace) isOpen() error {
 func (n *NetworkNamespace) Enter() (err error, ok bool) {
 	if err = n.isOpen(); err != nil {
 		err = fmt.Errorf("isOpen: %s", err)
-        return
+		return
 	}
 
 	if !n.lookedup {
 		if err, ok = n.refreshNetNSID(); err != nil {
 			err = fmt.Errorf("refreshNetNSID: %s", err)
-            return
+			return
 		}
 	}
 
 	if ok || n.armed {
 		if err = n.setCurrent(); err != nil {
 			err = fmt.Errorf("netns: SetCurrent: %s", err)
-            return
+			return
 		}
-        if !n.previousNsHandle.Equal(n.nsHandle) {
-            if err = netns.Set(n.nsHandle); err != nil {
-                err = fmt.Errorf("netns: Set: %s", err)
-                return
-            }
-            n.switched = true
-        }
+		if !n.previousNsHandle.Equal(n.nsHandle) {
+			if err = netns.Set(n.nsHandle); err != nil {
+				err = fmt.Errorf("netns: Set: %s", err)
+				return
+			}
+			n.switched = true
+		}
 	}
 
 	return
@@ -175,7 +175,7 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 			h, err = netns.GetFromPid(int(pid))
 			if err == nil {
 				n.nsHandle = h
-                n.armed = true
+				n.armed = true
 				return nil, true
 			}
 		}
@@ -187,7 +187,7 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 		h, err := netns.GetFromPid(n.PID)
 		if err == nil {
 			n.nsHandle = h
-            n.armed = true
+			n.armed = true
 			return nil, true
 		}
 		errors = append(errors, fmt.Sprintf("pid: %s", err))
@@ -197,7 +197,7 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 		h, err := netns.GetFromThread(n.PID, n.TID)
 		if err == nil {
 			n.nsHandle = h
-            n.armed = true
+			n.armed = true
 			return nil, true
 		}
 		errors = append(errors, fmt.Sprintf("tid: %s", err))
@@ -207,7 +207,7 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 		h, err := netns.GetFromName(n.NetName)
 		if err == nil {
 			n.nsHandle = h
-            n.armed = true
+			n.armed = true
 			return nil, true
 		}
 		errors = append(errors, fmt.Sprintf("net-name: %s", err))
@@ -217,7 +217,7 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 		h, err := netns.GetFromDocker(n.DockerName)
 		if err == nil {
 			n.nsHandle = h
-            n.armed = true
+			n.armed = true
 			return nil, true
 		}
 		errors = append(errors, fmt.Sprintf("docker-name: %s", err))
@@ -227,7 +227,7 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 		h, err := netns.GetFromPath(n.Path)
 		if err == nil {
 			n.nsHandle = h
-            n.armed = true
+			n.armed = true
 			return nil, true
 		}
 		errors = append(errors, fmt.Sprintf("path: %s", err))

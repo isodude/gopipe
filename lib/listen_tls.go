@@ -1,8 +1,8 @@
 package lib
 
 import (
-    "crypto/x509"
-    "fmt"
+	"crypto/x509"
+	"fmt"
 )
 
 type ListenTLS struct {

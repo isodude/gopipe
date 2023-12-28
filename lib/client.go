@@ -1,12 +1,12 @@
 package lib
 
 import (
-    "context"
-    "crypto/tls"
-    "fmt"
-    "io"
-    "net"
-    "sync"
+	"context"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net"
+	"sync"
 )
 
 type Client struct {

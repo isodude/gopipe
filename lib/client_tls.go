@@ -1,10 +1,10 @@
 package lib
 
 import (
-    "crypto/tls"
-    "crypto/x509"
-    "fmt"
-    "os"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"os"
 )
 
 type ClientTLS struct {
@@ -13,7 +13,7 @@ type ClientTLS struct {
 	CAFiles  []string `long:"ca-file" description:"TLS CA file"`
 	CertFile string   `long:"cert-file" description:"TLS Cert file"`
 	KeyFile  string   `long:"key-file" description:"TLS Key file"`
-	Debug    bool             `long:"debug"`
+	Debug    bool     `long:"debug"`
 }
 
 func (c *ClientTLS) TLSConfig() error {
