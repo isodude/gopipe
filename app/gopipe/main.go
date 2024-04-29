@@ -6,9 +6,11 @@ import (
 
 	"github.com/isodude/gopipe/lib"
 	"github.com/jessevdk/go-flags"
+
+	"golang.org/x/sync/errgroup"
 )
 
-type Args struct {
+type Connection struct {
 	Listen lib.Listen `group:"client" namespace:"listen"`
 
 	Client lib.Client `group:"client" namespace:"client"`
@@ -17,51 +19,69 @@ type Args struct {
 }
 
 func main() {
-	args := &Args{}
-	p := flags.NewParser(args, flags.Default)
-	if len(os.Args) == 1 {
-		p.WriteHelp(os.Stderr)
-		return
+	connections := []*Connection{}
+
+	osArgs := [][]string{}
+	i, j, k := 0, 0, ""
+	for j, k = range os.Args {
+		if k == "--next" {
+			osArgs = append(osArgs, os.Args[i+1:j])
+			i = j
+		}
+	}
+	if i == 0 {
+		osArgs = append(osArgs, os.Args)
+	} else {
+		osArgs = append(osArgs, os.Args[i+1:])
 	}
 
-	if _, err := p.Parse(); err != nil {
-		if flags.WroteHelp(err) {
-			return
+	for _, k := range osArgs {
+		connection := &Connection{}
+		if _, err := flags.ParseArgs(connection, k); err != nil {
+			if flags.WroteHelp(err) {
+				return
+			}
+
+			panic(err)
+		}
+		connections = append(connections, connection)
+	}
+
+	bCtx := context.Background()
+	g, ctx := errgroup.WithContext(bCtx)
+
+	for _, k := range connections {
+		k.Listen.Ctx = ctx
+		k.Listen.NetNs.Ctx = ctx
+		k.Client.Ctx = ctx
+		k.Client.NetNs.Ctx = ctx
+
+		if k.Debug {
+			k.Listen.Debug = true
+			k.Client.Debug = true
 		}
 
-		panic(err)
-	}
+		if k.Listen.Debug {
+			k.Listen.NetNs.Debug = true
+			k.Listen.TLS.Debug = true
+		}
 
-	ctx := context.Background()
-	args.Listen.Ctx = ctx
-	args.Listen.NetNs.Ctx = ctx
-	args.Client.Ctx = ctx
-	args.Client.NetNs.Ctx = ctx
+		if k.Client.Debug {
+			k.Client.NetNs.Debug = true
+			k.Client.TLS.Debug = true
+		}
 
-	if args.Debug {
-		args.Listen.Debug = true
-		args.Client.Debug = true
-	}
+		if err := k.Listen.TLS.TLSConfig(); err != nil {
+			panic(err)
+		}
 
-	if args.Listen.Debug {
-		args.Listen.NetNs.Debug = true
-		args.Listen.TLS.Debug = true
-	}
+		if err := k.Client.TLS.TLSConfig(); err != nil {
+			panic(err)
+		}
 
-	if args.Client.Debug {
-		args.Client.NetNs.Debug = true
-		args.Client.TLS.Debug = true
+		g.Go(func() error {
+			return k.Listen.Listen(&k.Client)
+		})
 	}
-
-	if err := args.Listen.TLS.TLSConfig(); err != nil {
-		panic(err)
-	}
-
-	if err := args.Client.TLS.TLSConfig(); err != nil {
-		panic(err)
-	}
-
-	if err := args.Listen.Listen(&args.Client); err != nil {
-		panic(err)
-	}
+	g.Wait()
 }
