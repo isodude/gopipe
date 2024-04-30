@@ -94,5 +94,6 @@ func main() {
 	}
 	if err := g.Wait(); err != nil {
 		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
 	}
 }
