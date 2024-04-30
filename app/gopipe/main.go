@@ -48,7 +48,7 @@ func main() {
 		connections = append(connections, connection)
 	}
 
-	bCtx, cancel := context.WithCancel(context.Background())
+	bCtx := context.Background()
 	g, ctx := errgroup.WithContext(bCtx)
 
 	for _, k := range connections {
@@ -89,11 +89,11 @@ func main() {
 		}
 
 		g.Go(func() error {
-			if err := k.Listen.Listen(&k.Client); err != nil {
-				cancel()
-				return err
+			err := k.Listen.Listen(&k.Client)
+			if err != nil && k.Debug {
+				fmt.Printf("Error: %v\n", err)
 			}
-			return nil
+			return err
 		})
 	}
 	if err := g.Wait(); err != nil {

@@ -173,6 +173,10 @@ func (l *Listen) Listen(client *Client) (err error) {
 		}
 	}
 
+	go func() {
+		<- l.Ctx.Done()
+		l.listener.Close()
+	}()
 	for {
 		from, err = l.listener.Accept()
 		if err != nil {
