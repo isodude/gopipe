@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/isodude/gopipe/lib"
@@ -51,6 +52,14 @@ func main() {
 	g, ctx := errgroup.WithContext(bCtx)
 
 	for _, k := range connections {
+		if k.Debug {
+			fmt.Printf("Found: %s(%s) -> %s(%s)\n",
+				k.Listen.Addr,
+				k.Listen.NetNs.SystemdUnit,
+				k.Client.Addr,
+				k.Client.NetNs.SystemdUnit,
+			)
+		}
 		k.Listen.Ctx = ctx
 		k.Listen.NetNs.Ctx = ctx
 		k.Client.Ctx = ctx
@@ -83,5 +92,7 @@ func main() {
 			return k.Listen.Listen(&k.Client)
 		})
 	}
-	g.Wait()
+	if err := g.Wait(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+	}
 }
