@@ -28,6 +28,7 @@ type Listen struct {
 
 	Ctx      context.Context
 	listener net.Listener
+	innerListener net.Listener
 	client   *Client
 }
 
@@ -77,13 +78,15 @@ func (l *Listen) Listen(client *Client) (err error) {
 		} else {
 			return fmt.Errorf("not implemented yet: %s", addr)
 		}
-	} else if l.TLS.config != nil {
-		l.listener, err = tls.Listen("tcp", l.Addr, l.TLS.config)
 	} else {
 		l.listener, err = net.Listen("tcp", l.Addr)
 	}
 	if err != nil {
 		return
+	}
+	if l.TLS.config != nil {
+		l.innerListener = l.listener
+		l.listener = tls.NewListener(l.listener, l.TLS.config)
 	}
 
 	if l.UID == 0 && l.User != "" {
@@ -138,7 +141,11 @@ func (l *Listen) Listen(client *Client) (err error) {
 		cloneflags.PrivateCGroup = true
 
 		p := &Proc{Ctx: l.Ctx, Cloneflags: cloneflags, Uid: l.UID, Gid: l.GID}
-		if err := p.ForkListenerPipe(l.listener, client.Dial); err != nil {
+		ln := l.listener
+		if l.innerListener != nil {
+			ln = l.innerListener
+		}
+		if err := p.ForkListenerPipe(ln, client.Dial); err != nil {
 			return err
 		}
 		return nil
