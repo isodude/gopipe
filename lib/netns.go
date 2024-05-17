@@ -6,8 +6,8 @@ import (
 	"net"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
+	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/vishvananda/netns"
@@ -20,7 +20,10 @@ type NetworkNamespace struct {
 	SystemdUnit string `long:"systemd-unit" description:"A systemd unit name"`
 	PID         int    `long:"pid" description:"Process ID of a running process"`
 	TID         int    `long:"tid" description:"Thread ID of a running thread inside a process"`
+	Disable     bool   `long:"disable" description:"Do not try to use namespaces"`
 
+	Protocol         string
+	MainPID          int
 	Ctx              context.Context
 	previousNsHandle netns.NsHandle
 	nsHandle         netns.NsHandle
@@ -30,51 +33,26 @@ type NetworkNamespace struct {
 	Debug            bool `long:"debug"`
 }
 
-func (n *NetworkNamespace) ChangeEveryThread() error {
-	if !n.lookedup {
-		if err, _ := n.refreshNetNSID(); err != nil {
-			return fmt.Errorf("refreshNetNSID: %s", err)
-		}
+func (n *NetworkNamespace) IsSet() bool {
+	if n.DockerName != "" || n.NetName != "" || n.Path != "" || n.SystemdUnit != "" || n.PID > 0 || n.TID > 0 {
+		return true
 	}
-
-	if !n.armed {
-		return nil
-	}
-
-	wgFunc := sync.WaitGroup{}
-	wgFunc1 := sync.WaitGroup{}
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	for i := 1; i < runtime.GOMAXPROCS(-1); i++ {
-		wgFunc.Add(1)
-		wgFunc1.Add(1)
-		go func(tid int) {
-			runtime.LockOSThread()
-			defer runtime.UnlockOSThread()
-			ptid := syscall.Gettid()
-			if n.Debug {
-				fmt.Printf("changing thread %v, %d\n", ptid, tid)
-				defer fmt.Printf("changed thread %v, %d\n", ptid, tid)
-			}
-			wgFunc.Done()
-			n.Enter()
-			wgFunc1.Done()
-			wg.Wait()
-		}(i)
-	}
-	wgFunc.Wait()
-	wgFunc1.Wait()
-	wg.Done()
-
-	return nil
+	return false
 }
 
-func (n *NetworkNamespace) Dialer(sourceIP string) *net.Dialer {
+func (n *NetworkNamespace) Dialer(sourceIP string, timeout time.Duration) (*net.Dialer, error) {
+	if sourceIP == "" {
+		sourceIP = "[::]"
+	}
+
+	ip, err := net.ResolveTCPAddr(n.Protocol, fmt.Sprintf("%s:0", sourceIP))
+	if err != nil {
+		return nil, err
+	}
+
 	return &net.Dialer{
-		LocalAddr: &net.TCPAddr{
-			IP:   net.ParseIP(sourceIP),
-			Port: 0,
-		},
+		LocalAddr: ip,
+		Timeout:   timeout,
 		Control: func(network, address string, c syscall.RawConn) error {
 			runtime.LockOSThread()
 			defer runtime.UnlockOSThread()
@@ -83,7 +61,7 @@ func (n *NetworkNamespace) Dialer(sourceIP string) *net.Dialer {
 			}
 			return nil
 		},
-	}
+	}, nil
 }
 
 func (n *NetworkNamespace) Close() {
@@ -104,6 +82,10 @@ func (n *NetworkNamespace) isOpen() error {
 }
 
 func (n *NetworkNamespace) Enter() (err error, ok bool) {
+	if n.Disable {
+		return nil, false
+	}
+
 	if err = n.isOpen(); err != nil {
 		err = fmt.Errorf("isOpen: %s", err)
 		return
@@ -116,18 +98,12 @@ func (n *NetworkNamespace) Enter() (err error, ok bool) {
 		}
 	}
 
-	if ok || n.armed {
-		if err = n.setCurrent(); err != nil {
-			err = fmt.Errorf("netns: SetCurrent: %s", err)
+	if !n.previousNsHandle.Equal(n.nsHandle) {
+		if err = netns.Set(n.nsHandle); err != nil {
+			err = fmt.Errorf("netns: Set: %s", err)
 			return
 		}
-		if !n.previousNsHandle.Equal(n.nsHandle) {
-			if err = netns.Set(n.nsHandle); err != nil {
-				err = fmt.Errorf("netns: Set: %s", err)
-				return
-			}
-			n.switched = true
-		}
+		n.switched = true
 	}
 
 	return
@@ -143,7 +119,7 @@ func (n *NetworkNamespace) Exit() (err error) {
 	}
 
 	if err = netns.Set(n.previousNsHandle); err != nil {
-		return fmt.Errorf("Failed to switch back to ns: %v", err)
+		return fmt.Errorf("failed to switch back to ns: %v", err)
 	}
 
 	n.switched = false
@@ -151,7 +127,7 @@ func (n *NetworkNamespace) Exit() (err error) {
 	return nil
 }
 
-func (n *NetworkNamespace) setCurrent() error {
+func (n *NetworkNamespace) SetCurrent() error {
 	h, err := netns.Get()
 	if err != nil {
 		return err
@@ -162,6 +138,7 @@ func (n *NetworkNamespace) setCurrent() error {
 }
 
 func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
+
 	defer func() {
 		n.lookedup = true
 	}()
@@ -233,6 +210,16 @@ func (n *NetworkNamespace) refreshNetNSID() (error, bool) {
 		errors = append(errors, fmt.Sprintf("path: %s", err))
 	}
 
+	if !n.armed {
+		h, err := netns.Get()
+		if err == nil {
+			n.nsHandle, n.previousNsHandle = n.previousNsHandle, h
+			n.armed = true
+			return nil, true
+		}
+		errors = append(errors, fmt.Sprintf("path: %s", err))
+	}
+
 	if len(errors) > 0 {
 		return fmt.Errorf("%s", strings.Join(errors, ", ")), false
 	}
@@ -254,9 +241,9 @@ func (n *NetworkNamespace) getSystemdUnitMainPID(unit string) (uint32, error) {
 
 	var pid uint32
 	if value, ok := props["ExecMainPID"]; !ok {
-		return 0, fmt.Errorf("Could not find %s", "ExecMainPID")
+		return 0, fmt.Errorf("could not find %s", "ExecMainPID")
 	} else if pid, ok = value.(uint32); !ok {
-		return 0, fmt.Errorf("Value was not property: %v", value)
+		return 0, fmt.Errorf("value was not property: %v", value)
 	}
 
 	return pid, nil

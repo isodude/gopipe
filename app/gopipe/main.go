@@ -16,6 +16,8 @@ type Connection struct {
 
 	Client lib.Client `group:"client" namespace:"client"`
 
+	proxy lib.Proxy
+
 	Debug bool `long:"debug"`
 }
 
@@ -45,6 +47,19 @@ func main() {
 
 			panic(err)
 		}
+		if connection.Listen.ShouldFork && connection.Client.ShouldFork {
+			connection.proxy = &lib.ForkListenForkClientProxy{}
+		} else if connection.Listen.ShouldFork {
+			connection.proxy = &lib.ForkListenProxy{}
+		} else if connection.Client.ShouldFork {
+			connection.proxy = &lib.ForkClientProxy{}
+		} else if connection.Client.Addr.IsFd() {
+			connection.proxy = &lib.UnixSendProxy{}
+		} else if connection.Listen.Addr.IsFd() && connection.Listen.IncomingConn {
+			connection.proxy = &lib.UnixDialProxy{}
+		} else {
+			connection.proxy = &lib.SimpleProxy{}
+		}
 		connections = append(connections, connection)
 	}
 
@@ -62,8 +77,16 @@ func main() {
 		}
 		k.Listen.Ctx = ctx
 		k.Listen.NetNs.Ctx = ctx
+		if !k.Listen.NetNs.Disable {
+			k.Listen.NetNs.SetCurrent()
+		}
+		k.Listen.NetNs.Protocol = k.Listen.Protocol
 		k.Client.Ctx = ctx
 		k.Client.NetNs.Ctx = ctx
+		if !k.Client.NetNs.Disable {
+			k.Client.NetNs.SetCurrent()
+		}
+		k.Client.NetNs.Protocol = k.Listen.Protocol
 
 		if k.Debug {
 			k.Listen.Debug = true
@@ -87,14 +110,15 @@ func main() {
 		if err := k.Client.TLS.TLSConfig(); err != nil {
 			panic(err)
 		}
-
-		g.Go(func() error {
-			err := k.Listen.Listen(&k.Client)
+		f := func() error {
+			err := k.proxy.Proxy(&k.Listen, &k.Client)
 			if err != nil && k.Debug {
-				fmt.Printf("Error: %v\n", err)
+				fmt.Printf("Error: %s: %v\n", k.Listen.Addr, err)
 			}
 			return err
-		})
+		}
+
+		g.Go(f)
 	}
 	if err := g.Wait(); err != nil {
 		fmt.Printf("Error: %v\n", err)

@@ -16,6 +16,23 @@ type ClientTLS struct {
 	Debug    bool     `long:"debug"`
 }
 
+func (c *ClientTLS) Args(group string) (args []string) {
+	if c.CertFile != "" {
+		args = append(args, fmt.Sprintf("--%s.cert-file=%s", group, c.CertFile))
+	}
+	if c.KeyFile != "" {
+		args = append(args, fmt.Sprintf("--%s.key-file=%s", group, c.KeyFile))
+	}
+	if c.Debug {
+		args = append(args, fmt.Sprintf("--%s.debug", group))
+	}
+	for _, k := range c.CAFiles {
+		args = append(args, fmt.Sprintf("--%s.ca-file=%s", group, k))
+	}
+
+	return
+}
+
 func (c *ClientTLS) TLSConfig() error {
 	return c.tlsConfig(true)
 }
@@ -58,7 +75,6 @@ func (c *ClientTLS) tlsConfig(client bool) error {
 		}
 
 		c.config.Certificates = []tls.Certificate{cert}
-		c.config.BuildNameToCertificate()
 	}
 
 	return nil

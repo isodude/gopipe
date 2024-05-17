@@ -11,6 +11,15 @@ type ListenTLS struct {
 	AllowedDNSNames []string `long:"allowed-dns-name" description:"Allowed DNS names"`
 }
 
+func (l ListenTLS) Args(group string) (args []string) {
+	args = append(args, l.ClientTLS.Args(group)...)
+	for _, k := range l.AllowedDNSNames {
+		args = append(args, fmt.Sprintf("--%s.allowed-dns-name=%s", group, k))
+	}
+
+	return
+}
+
 func (l *ListenTLS) TLSConfig() error {
 	if err := l.tlsConfig(false); err != nil {
 		return err
