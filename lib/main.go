@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 
 	"github.com/jessevdk/go-flags"
 
@@ -63,7 +64,9 @@ func MainFunc(args []string) {
 		connections = append(connections, connection)
 	}
 
-	bCtx := context.Background()
+	bCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
 	g, ctx := errgroup.WithContext(bCtx)
 
 	for _, k := range connections {
