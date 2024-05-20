@@ -49,7 +49,7 @@ func (f *ForkClientProxy) dial(c *Client) (*net.UnixConn, error) {
 	}
 	args := []string{fmt.Sprintf("--client.addr=%s", c.GetAddr()), "--listen.addr=FD:3", "--listen.conn"}
 	args = append(args, c.TLS.Args("client.tls")...)
-	fmt.Printf("forking %s %v\n", os.Args[0], args)
+	//fmt.Printf("forking %s %v\n", os.Args[0], args)
 
 	cmd := exec.CommandContext(c.Ctx, os.Args[0], args...)
 
@@ -117,7 +117,6 @@ func (f *ForkClientProxy) send(u *net.UnixConn, src net.Conn) error {
 		return err
 	}
 
-	fmt.Printf("sending\n")
 	return fd.Put(u, os.NewFile(uintptr(connFd), "remote"))
 }
 
@@ -135,14 +134,14 @@ func (f *ForkClientProxy) Proxy(l *Listen, c *Client) error {
 
 	// Make sure ln is closed if cmd exits
 	go func() {
+		defer ln.Close()
 		if err := f.ClientCmd.Wait(); err != nil {
 			if err, ok := err.(*exec.ExitError); ok {
 				fmt.Printf("unable to start process: %v, %s", err, err.Stderr)
+				return
 			}
 			fmt.Printf("unable to start process: %v", err)
-			os.Exit(1)
 		}
-		os.Exit(0)
 	}()
 
 	var src net.Conn
@@ -150,8 +149,6 @@ func (f *ForkClientProxy) Proxy(l *Listen, c *Client) error {
 		if src, err = ln.Accept(); err != nil {
 			return err
 		}
-
-		fmt.Printf("hello there\n")
 
 		if t, ok := src.(*tls.Conn); ok {
 			p := &Pipe{}

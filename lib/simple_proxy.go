@@ -9,6 +9,7 @@ import (
 )
 
 type SimpleProxy struct {
+	SetupCtxCancel context.CancelFunc
 }
 
 func (s *SimpleProxy) listen(l *Listen) (ln net.Listener, err error) {
@@ -61,7 +62,13 @@ func (s *SimpleProxy) Proxy(l *Listen, c *Client) (err error) {
 	var ln net.Listener
 	ln, err = s.listen(l)
 	if err != nil {
+		if s.SetupCtxCancel != nil {
+			s.SetupCtxCancel()
+		}
 		return
+	}
+	if s.SetupCtxCancel != nil {
+		s.SetupCtxCancel()
 	}
 	var src, dst net.Conn
 	for {

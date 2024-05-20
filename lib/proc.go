@@ -30,10 +30,6 @@ type OSFile interface {
 	File() (*os.File, error)
 }
 
-func (p *Proc) listenerToFile(l OSFile) (*os.File, error) {
-	return l.File()
-}
-
 func (p *Proc) SetSysProcAttr(c *exec.Cmd) {
 	c.SysProcAttr = p.Cloneflags.Set()
 	if p.Uid > 0 || p.Gid > 0 {

@@ -2,7 +2,6 @@ package lib
 
 import (
 	"context"
-	"net"
 )
 
 type Listen struct {
@@ -16,11 +15,8 @@ type Listen struct {
 
 	IncomingConn bool `long:"conn" description:"Accept conns from parent"`
 
-	Ctx           context.Context
-	listener      net.Listener
-	innerListener net.Listener
-	client        *Client
-	clientUc      *net.UnixConn
+	Ctx    context.Context
+	client *Client
 }
 
 func (l *Listen) SetClient(client *Client) {

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 
 	"os/exec"
 )
@@ -26,38 +27,44 @@ func (f *ForkListenForkClientProxy) listen(l *Listen) (*net.UnixConn, error) {
 		return nil, err
 	}
 
-	args := []string{fmt.Sprintf("--listen.addr=%s", l.GetAddr()), "--client.addr=FD:3"}
+	cmdBin := os.Args[0]
+	args := []string{}
+	if e := os.Getenv("CMD_LISTEN_FORK_ARGS"); e != "" {
+		args = append(args, strings.Split(e, " ")...)
+	}
+	args = append(args, fmt.Sprintf("--listen.addr=%s", l.GetAddr()), "--client.addr=FD:3")
 	args = append(args, l.TLS.Args("listen.tls")...)
 	args = append(args, "--listen.netns.disable", "--client.netns.disable")
-	fmt.Printf("forking %s %v\n", os.Args[0], args)
+	//fmt.Printf("forking %s %v\n", cmdBin, args)
 
-	cmd := exec.CommandContext(f.Ctx, os.Args[0], args...)
+	cmd := exec.CommandContext(f.Ctx, cmdBin, args...)
 
 	cloneflags, err := NewCloneflags()
 	if err != nil {
 		return nil, err
 	}
-
-	cloneflags.PrivateMounts = true
-	cloneflags.PrivatePID = true
-	if l.UID == 0 && l.GID == 0 {
-		cloneflags.PrivateUsers = true
-	}
-	cloneflags.PrivateUTS = true
-	// hangs child process
-	// cloneflags.PrivateTLS = true
-	cloneflags.PrivateIO = true
-	cloneflags.PrivateIPC = true
-	cloneflags.PrivateClock = true
-	cloneflags.PrivateCGroup = true
-
+	/*
+		cloneflags.PrivateMounts = true
+		cloneflags.PrivatePID = true
+		if l.UID == 0 && l.GID == 0 {
+			cloneflags.PrivateUsers = true
+		}
+		cloneflags.PrivateUTS = true
+		// hangs child process
+		// cloneflags.PrivateTLS = true
+		cloneflags.PrivateIO = true
+		cloneflags.PrivateIPC = true
+		cloneflags.PrivateClock = true
+		cloneflags.PrivateCGroup = true
+	*/
 	f.ListenProc = &Proc{Cloneflags: cloneflags}
 	if err := f.ListenProc.SetUserGroup(l.User); err != nil {
 		return nil, err
 	}
 	f.ListenProc.SetSysProcAttr(cmd)
 
-	cmd.ExtraFiles, cmd.Stdout, cmd.Stderr = []*os.File{pipe.Files[1]}, os.Stdout, os.Stderr
+	fc, _ := conns[1].(*net.UnixConn).File()
+	cmd.ExtraFiles, cmd.Stdout, cmd.Stderr = []*os.File{fc}, os.Stdout, os.Stderr
 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -87,31 +94,37 @@ func (f *ForkListenForkClientProxy) dial(c *Client) (*net.UnixConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := []string{fmt.Sprintf("--client.addr=%s", c.GetAddr()), "--listen.addr=FD:3", "--listen.conn"}
+
+	cmdBin := os.Args[0]
+	args := []string{}
+	if e := os.Getenv("CMD_CLIENT_FORK_ARGS"); e != "" {
+		args = append(args, strings.Split(e, " ")...)
+	}
+	args = append(args, fmt.Sprintf("--client.addr=%s", c.GetAddr()), "--listen.addr=FD:3", "--listen.conn")
 	args = append(args, c.TLS.Args("client.tls")...)
 	args = append(args, "--listen.netns.disable", "--client.netns.disable")
-	fmt.Printf("forking %s %v\n", os.Args[0], args)
+	//fmt.Printf("forking %s %v\n", cmdBin, args)
 
-	cmd := exec.CommandContext(f.Ctx, os.Args[0], args...)
+	cmd := exec.CommandContext(f.Ctx, cmdBin, args...)
 
 	cloneflags, err := NewCloneflags()
 	if err != nil {
 		return nil, err
 	}
-
-	cloneflags.PrivateMounts = true
-	cloneflags.PrivatePID = true
-	if c.UID == 0 && c.GID == 0 {
-		cloneflags.PrivateUsers = true
-	}
-	cloneflags.PrivateUTS = true
-	// hangs child process
-	// cloneflags.PrivateTLS = true
-	cloneflags.PrivateIO = true
-	cloneflags.PrivateIPC = true
-	cloneflags.PrivateClock = true
-	cloneflags.PrivateCGroup = true
-
+	/*
+		cloneflags.PrivateMounts = true
+		cloneflags.PrivatePID = true
+		if c.UID == 0 && c.GID == 0 {
+			cloneflags.PrivateUsers = true
+		}
+		cloneflags.PrivateUTS = true
+		// hangs child process
+		// cloneflags.PrivateTLS = true
+		cloneflags.PrivateIO = true
+		cloneflags.PrivateIPC = true
+		cloneflags.PrivateClock = true
+		cloneflags.PrivateCGroup = true
+	*/
 	f.ClientProc = &Proc{Cloneflags: cloneflags}
 
 	if err := f.ClientProc.SetUserGroup(c.User); err != nil {
@@ -120,7 +133,8 @@ func (f *ForkListenForkClientProxy) dial(c *Client) (*net.UnixConn, error) {
 
 	f.ClientProc.SetSysProcAttr(cmd)
 
-	cmd.ExtraFiles, cmd.Stdout, cmd.Stderr = []*os.File{pipe.Files[1]}, os.Stdout, os.Stderr
+	fc, _ := conns[1].(*net.UnixConn).File()
+	cmd.ExtraFiles, cmd.Stdout, cmd.Stderr = []*os.File{fc}, os.Stdout, os.Stderr
 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
