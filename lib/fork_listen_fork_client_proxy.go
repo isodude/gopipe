@@ -31,7 +31,7 @@ func (f *ForkListenForkClientProxy) listen(l *Listen) (*net.UnixConn, error) {
 	args = append(args, l.TLS.Args("listen.tls")...)
 	args = append(args, "--listen.netns.disable", "--client.netns.disable")
 
-	cmd, uc, err := ForkUnixConn(f.Ctx, l.User, &l.NetNs, bin, args...)
+	cmd, uc, err := ForkUnixConn(l.Ctx, l.User, &l.NetNs, bin, args...)
 	if err != nil {
 		return nil, err
 	}

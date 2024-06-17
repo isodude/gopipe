@@ -18,7 +18,7 @@ func (f *ForkListenProxy) listen(l *Listen) (net.Listener, error) {
 	args := []string{fmt.Sprintf("--listen.addr=%s", l.GetAddr()), "--client.addr=FD:3"}
 	args = append(args, l.TLS.Args("listen.tls")...)
 
-	cmd, uc, err := ForkUnixConn(f.Ctx, l.User, &l.NetNs, os.Args[0], args...)
+	cmd, uc, err := ForkUnixConn(l.Ctx, l.User, &l.NetNs, os.Args[0], args...)
 	if err != nil {
 		return nil, err
 	}
