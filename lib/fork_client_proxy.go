@@ -3,7 +3,6 @@ package lib
 import (
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"runtime"
@@ -19,6 +18,7 @@ type ForkClientProxy struct {
 	ListenProc *Proc
 	ClientCmd  *exec.Cmd
 	ListenCmd  *exec.Cmd
+	Ln         net.Listener
 }
 
 func (f *ForkClientProxy) listen(l *Listen) (ln net.Listener, err error) {
@@ -120,21 +120,24 @@ func (f *ForkClientProxy) send(u *net.UnixConn, src net.Conn) error {
 	return fd.Put(u, os.NewFile(uintptr(connFd), "remote"))
 }
 
-func (f *ForkClientProxy) Proxy(l *Listen, c *Client) error {
-	ln, err := f.listen(l)
+func (f *ForkClientProxy) Close() error {
+	return f.Ln.Close()
+}
+
+func (f *ForkClientProxy) Proxy(l *Listen, c *Client) (err error) {
+	f.Ln, err = f.listen(l)
 	if err != nil {
-		return err
+		return
 	}
 
 	u, err := f.dial(c)
 	if err != nil {
-		return err
+		return
 	}
 	defer f.ClientCmd.Cancel()
 
 	// Make sure ln is closed if cmd exits
 	go func() {
-		defer ln.Close()
 		if err := f.ClientCmd.Wait(); err != nil {
 			if err, ok := err.(*exec.ExitError); ok {
 				fmt.Printf("unable to start process: %v, %s", err, err.Stderr)
@@ -146,27 +149,18 @@ func (f *ForkClientProxy) Proxy(l *Listen, c *Client) error {
 
 	var src net.Conn
 	for {
-		if src, err = ln.Accept(); err != nil {
-			return err
+		if src, err = f.Ln.Accept(); err != nil {
+			return
 		}
 
 		if t, ok := src.(*tls.Conn); ok {
-			p := &Pipe{}
-			conns, err := p.Unixpair()
+			src, err = TerminateTLS(t)
 			if err != nil {
-				return err
+				src.Close()
+				continue
 			}
-			go func() {
-				go func() {
-					io.Copy(conns[0], t)
-					conns[0].Close()
-				}()
-				io.Copy(t, conns[0])
-				t.Close()
-			}()
-			go f.send(u, conns[1])
-		} else {
-			go f.send(u, src)
 		}
+
+		go f.send(u, src)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"os/signal"
 	"testing"
 	"time"
 )
@@ -260,181 +259,69 @@ func TestFDPassthrough3(t *testing.T) {
 	}
 }
 
-// TestE2EBin isn't a real test.
-func TestE2EBinListen(t *testing.T) {
-	if os.Getenv("CMD_TEST_E2E") != "1" {
-		t.SkipNow()
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	p := &UnixSendProxy{}
-	l := &Listen{
-		Ctx:      context.Background(),
-		Protocol: "tcp",
-		Addr: &Addr{
-			Addr: "127.0.0.1:9000",
-		},
-		TLS: ListenTLS{
-			ClientTLS: &ClientTLS{},
-		},
-	}
-	c := &Client{
-		Ctx: context.Background(),
-		Addr: &Addr{
-			Addr: "FD:3",
-		},
-	}
-	go func() {
-		defer stop()
-		if err := p.Proxy(l, c); err != nil {
-			fmt.Printf("err: %v\n", err)
-		}
-	}()
-
-	<-ctx.Done()
-}
-
-func TestE2EBinClient(t *testing.T) {
-	if os.Getenv("CMD_TEST_E2E") != "1" {
-		t.SkipNow()
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-	p := &UnixDialProxy{}
-	l := &Listen{
-		Ctx:      ctx,
-		Protocol: "tcp",
-		Addr: &Addr{
-			Addr: "FD:3",
-		},
-		IncomingConn: true,
-	}
-	c := &Client{
-		Ctx:      ctx,
-		Protocol: "tcp",
-		SourceIP: "127.0.0.1",
-		Addr: &Addr{
-			Addr: "127.0.0.1:9001",
-		},
-		NetNs: NetworkNamespace{
-			Ctx:     context.Background(),
-			Disable: true,
-		},
-		Timeout: 2 * time.Second,
-	}
-	go func() {
-		defer stop()
-		if err := p.Proxy(l, c); err != nil {
-			fmt.Printf("err: %v\n", err)
-		}
-	}()
-
-	<-ctx.Done()
-}
-
-// TestE2EBin isn't a real test.
-func TestE2EBin(t *testing.T) {
-	if os.Getenv("CMD_TEST_E2E") != "1" {
-		t.SkipNow()
-	}
-
-	args := os.Args
-	for len(args) > 0 {
-		if args[0] == "--" {
-			args = args[1:]
-			break
-		}
-		args = args[1:]
-	}
-	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "No command\n")
-		os.Exit(3)
-	}
-
-	MainFunc(args)
-}
-
-func TestE2E(t *testing.T) {
-	ch := make(chan error, 2)
-	ch1 := make(chan struct{})
+func TestForkListenForkClientE2E(t *testing.T) {
+	ch := make(chan struct{})
 	connCh := make(chan net.Conn)
-	ln, err := net.Listen("tcp", "127.0.0.1:9001")
+
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	go func(ch chan error, connCh chan net.Conn) {
+	addr1 := ln1.Addr().String()
+	ln1.Close()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	addr := fmt.Sprintf("--client.addr=%s", ln.Addr().String())
+
+	defer ln.Close()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	go func(connCh chan net.Conn) {
 		defer ln.Close()
-		defer close(ch)
 		defer close(connCh)
-		close(ch1)
+		close(ch)
 		conn, err := ln.Accept()
 		if err != nil {
-			ch <- err
+			cancel(err)
 			return
 		}
 		connCh <- conn
-	}(ch, connCh)
+		cancel(nil)
+	}(connCh)
 
 	payload := "hello there"
 
-	<-ch1
+	<-ch
 
-	p1, p2 := &Pipe{}, &Pipe{}
-	c1, err := p1.Unixpair()
-	if err != nil {
-		t.Fatalf("%v", err)
+	if len(ctx.Done()) > 0 {
+		t.Fatalf("%v", ctx.Err())
 	}
-	c2, err := p2.Unixpair()
-	if err != nil {
-		t.Fatalf("%v", err)
-	}
-	go CopyUnix(c2[0].(*net.UnixConn), c1[1].(*net.UnixConn))
 
-	ctx := context.Background()
-	args := []string{"-test.run", "^TestE2EBinListen$", "-test.timeout", "5s", "--"}
+	args := []string{"-test.run", "^TestE2EBin$", "-test.timeout", "20s", "--", "--listen.fork", fmt.Sprintf("--listen.addr=%s", addr1), "--client.fork", addr}
 	l := exec.CommandContext(ctx, os.Args[0], args...)
 	l.Env = []string{
 		`CMD_TEST_E2E=1`,
+		`CMD_LISTEN_FORK_ARGS=-test.run ^TestE2EBin$ -test.timeout 20s --`,
+		`CMD_CLIENT_FORK_ARGS=-test.run ^TestE2EBin$ -test.timeout 20s --`,
 	}
-	f, _ := c1[0].(*net.UnixConn).File()
-	l.ExtraFiles = []*os.File{f}
-
 	l.Stdout, l.Stderr = os.Stdout, os.Stderr
+
 	if err := l.Start(); err != nil {
 		if err, ok := err.(*exec.ExitError); ok {
 			t.Fatalf("unable to start process: %s, %v, %v, %s", os.Args[0], args, err, err.Stderr)
 		}
 		t.Fatalf("%v", err)
 	}
-	defer l.Process.Signal(os.Interrupt)
 
-	args = []string{"-test.run", "^TestE2EBinClient$", "-test.timeout", "5s", "--"}
-	c := exec.CommandContext(ctx, os.Args[0], args...)
-	c.Env = []string{
-		`CMD_TEST_E2E=1`,
-	}
-	f, _ = c2[1].(*net.UnixConn).File()
-	c.ExtraFiles = []*os.File{f}
-
-	c.Stdout, c.Stderr = os.Stdout, os.Stderr
-	if err := c.Start(); err != nil {
-		if err, ok := err.(*exec.ExitError); ok {
-			t.Fatalf("unable to start process: %s, %v, %v, %s", os.Args[0], args, err, err.Stderr)
-		}
-		t.Fatalf("%v", err)
-	}
-	defer l.Process.Signal(os.Interrupt)
-
-	if len(ch) > 0 {
-		t.Fatalf("%v", <-ch)
+	if len(ctx.Done()) > 0 {
+		t.Fatalf("%v", ctx.Err())
 	}
 
 	retries := 0
 retry:
-	connWrite, err := net.Dial("tcp", "127.0.0.1:9000")
+	connWrite, err := net.Dial("tcp", addr1)
 	if err != nil {
 		if retries > 10 {
 			t.Fatalf("unable to dial: %v", err)
@@ -452,8 +339,8 @@ retry:
 	}
 
 	select {
-	case err := <-ch:
-		t.Fatalf("%v", err)
+	case <-ctx.Done():
+		t.Fatalf("%v", ctx.Err())
 	case conn := <-connCh:
 		defer conn.Close()
 		buf := make([]byte, len(payload))
@@ -464,5 +351,7 @@ retry:
 		if string(buf) != payload {
 			t.Fatalf("payload not received")
 		}
+		l.Cancel()
 	}
+	fmt.Printf("hey: %v\n", l.Wait())
 }

@@ -67,7 +67,8 @@ func MainFunc(args []string) {
 	bCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	g, ctx := errgroup.WithContext(bCtx)
+	cCtx, cancel := context.WithCancelCause(context.Background())
+	g, ctx := errgroup.WithContext(cCtx)
 
 	for _, k := range connections {
 		if k.Debug {
@@ -120,11 +121,34 @@ func MainFunc(args []string) {
 			}
 			return err
 		}
+		defer k.proxy.Close()
 
 		g.Go(f)
 	}
-	if err := g.Wait(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+	go func() {
+		if err := g.Wait(); err != nil {
+			cancel(err)
+		}
+
+	}()
+	select {
+	case <-ctx.Done():
+		if err := ctx.Err(); err != nil {
+			fmt.Printf("Error: %v", err)
+			cancel(err)
+		}
+		return
+
+	case <-bCtx.Done():
+		if err := bCtx.Err(); err != nil {
+			fmt.Printf("Error: %v", err)
+			cancel(err)
+		}
+		return
+	case <-cCtx.Done():
+		if err := cCtx.Err(); err != nil {
+			fmt.Printf("Error: %v", err)
+		}
+		return
 	}
 }

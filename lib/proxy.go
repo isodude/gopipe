@@ -1,14 +1,19 @@
 package lib
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"syscall"
+	"time"
 )
 
 type Proxy interface {
 	Proxy(*Listen, *Client) error
+	Close() error
 }
 
 type CloseWriter struct {
@@ -145,4 +150,57 @@ func CopyUnix(dst, src net.Conn) (err error) {
 		}
 
 	}
+}
+
+// Terminates TLS with two go routines.
+// Will close conn when io.Copy is ended.
+// The returned net.Conn is an actual UnixConn can
+// be passed over unix sockets.
+func TerminateTLS(conn *tls.Conn) (net.Conn, error) {
+	conns, err := UnixPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	go func() {
+		go func() {
+			io.Copy(conns[0], conn)
+			conns[0].Close()
+		}()
+		io.Copy(conn, conns[0])
+		conn.Close()
+	}()
+	return conns[1], nil
+}
+
+type Dialer struct {
+	NetNs     *NetworkNamespace
+	SourceIP  string
+	Timeout   time.Duration
+	TLSConfig *tls.Config
+}
+
+func (d *Dialer) DialContext(ctx context.Context, protocol string, addr string) (conn net.Conn, err error) {
+	ctx, cancel := context.WithTimeout(ctx, d.Timeout)
+	defer cancel()
+	dialer := &net.Dialer{}
+	if d.NetNs != nil {
+		dialer, err = d.NetNs.Dialer(d.SourceIP, d.Timeout)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if d.TLSConfig != nil {
+		conn, err = tls.DialWithDialer(dialer, protocol, addr, d.TLSConfig)
+	} else {
+		conn, err = dialer.DialContext(ctx, protocol, addr)
+	}
+
+	if err != nil {
+		if err == io.EOF {
+			err = nil
+		}
+	}
+
+	return
 }

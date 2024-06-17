@@ -10,6 +10,7 @@ import (
 
 type SimpleProxy struct {
 	SetupCtxCancel context.CancelFunc
+	Ln             net.Listener
 }
 
 func (s *SimpleProxy) listen(l *Listen) (ln net.Listener, err error) {
@@ -58,9 +59,11 @@ func (s *SimpleProxy) dial(c *Client) (conn net.Conn, err error) {
 	return
 }
 
+func (s *SimpleProxy) Close() (err error) {
+	return s.Ln.Close()
+}
 func (s *SimpleProxy) Proxy(l *Listen, c *Client) (err error) {
-	var ln net.Listener
-	ln, err = s.listen(l)
+	s.Ln, err = s.listen(l)
 	if err != nil {
 		if s.SetupCtxCancel != nil {
 			s.SetupCtxCancel()
@@ -72,7 +75,7 @@ func (s *SimpleProxy) Proxy(l *Listen, c *Client) (err error) {
 	}
 	var src, dst net.Conn
 	for {
-		if src, err = ln.Accept(); err != nil {
+		if src, err = s.Ln.Accept(); err != nil {
 			return
 		}
 

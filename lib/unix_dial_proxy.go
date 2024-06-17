@@ -1,8 +1,6 @@
 package lib
 
 import (
-	"context"
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +10,7 @@ import (
 )
 
 type UnixDialProxy struct {
+	Ln net.Listener
 }
 
 func (s *UnixDialProxy) listen(l *Listen) (ln net.Listener, err error) {
@@ -38,31 +37,20 @@ func (s *UnixDialProxy) listen(l *Listen) (ln net.Listener, err error) {
 }
 
 func (f *UnixDialProxy) dial(c *Client) (conn net.Conn, err error) {
-	ctx, cancel := context.WithTimeout(c.Ctx, c.Timeout)
-	defer cancel()
-	dialer, err := c.NetNs.Dialer(c.SourceIP, c.Timeout)
-	if err != nil {
-		return nil, err
-	}
+	return (&Dialer{
+		NetNs:     &c.NetNs,
+		Timeout:   c.Timeout,
+		TLSConfig: c.TLS.config,
+		SourceIP:  c.SourceIP,
+	}).DialContext(c.Ctx, c.Protocol, c.GetAddr())
+}
 
-	if c.TLS.config != nil {
-		conn, err = tls.DialWithDialer(dialer, c.Protocol, c.GetAddr(), c.TLS.config)
-	} else {
-		conn, err = dialer.DialContext(ctx, c.Protocol, c.GetAddr())
-	}
-
-	if err != nil {
-		if err == io.EOF {
-			err = nil
-		}
-	}
-
-	return
+func (f *UnixDialProxy) Close() error {
+	return f.Ln.Close()
 }
 
 func (f *UnixDialProxy) Proxy(l *Listen, c *Client) (err error) {
-	var ln net.Listener
-	ln, err = f.listen(l)
+	f.Ln, err = f.listen(l)
 	if err != nil {
 		return
 	}
@@ -70,7 +58,7 @@ func (f *UnixDialProxy) Proxy(l *Listen, c *Client) (err error) {
 	var src, dst net.Conn
 
 	for {
-		if src, err = ln.Accept(); err != nil {
+		if src, err = f.Ln.Accept(); err != nil {
 			return
 		}
 
@@ -84,6 +72,7 @@ func (f *UnixDialProxy) Proxy(l *Listen, c *Client) (err error) {
 				fmt.Printf("unable to dial: %v\n", err)
 				return
 			}
+
 			src = &CloseWriter{src}
 			go func() {
 				defer func() {

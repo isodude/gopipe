@@ -8,6 +8,7 @@ import (
 )
 
 type UnixSendProxy struct {
+	Ln net.Listener
 }
 
 func (s *UnixSendProxy) listen(l *Listen) (ln net.Listener, err error) {
@@ -53,19 +54,22 @@ func (f *UnixSendProxy) send(c *Client, src net.Conn) (err error) {
 	return Put(uc, os.NewFile(uintptr(connFd), "remote"))
 }*/
 
+func (f *UnixSendProxy) Close() error {
+	return f.Ln.Close()
+}
 func (f *UnixSendProxy) Proxy(l *Listen, c *Client) (err error) {
-	var ln net.Listener
-	ln, err = f.listen(l)
+	f.Ln, err = f.listen(l)
 	if err != nil {
 		return
 	}
+
 	uc, err := c.Fd()
 	if err != nil {
 		return err
 	}
 	var src net.Conn
 	for {
-		if src, err = ln.Accept(); err != nil {
+		if src, err = f.Ln.Accept(); err != nil {
 			return
 		}
 
